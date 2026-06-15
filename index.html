@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maasin City Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Sora:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #0f1117; --panel: #16191f; --accent: #4ade80; --accent2: #22d3ee;
+            --text: #e2e8f0; --muted: #64748b; --border: #1e2533; --panel-width: 360px;
+        }
+        body { font-family: 'Sora', sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+        #map-wrapper { position: absolute; inset: 0; }
+        #map { height: 100%; width: 100%; }
+
+        /* TOOLBAR */
+        #toolbar { position: absolute; top: 16px; left: 16px; z-index: 900; }
+        #header { background: rgba(15,17,23,0.88); backdrop-filter: blur(10px); border: 1px solid var(--border); border-radius: 12px; padding: 12px 18px; }
+        #header h1 { font-family: 'Space Mono', monospace; font-size: 14px; color: var(--accent); letter-spacing: 2px; text-transform: uppercase; }
+        #header p { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+        /* HINT */
+        #hint { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 900; background: rgba(15,17,23,0.85); backdrop-filter: blur(8px); border: 1px solid var(--border); border-radius: 99px; padding: 8px 20px; font-size: 12px; color: var(--muted); pointer-events: none; transition: opacity 0.4s; white-space: nowrap; }
+        #hint.hidden { opacity: 0; }
+
+        /* PANEL */
+        #side-panel { width: var(--panel-width); max-width: 92vw; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; top: 0; right: 0; bottom: 0; z-index: 1000; overflow: hidden; transform: translateX(100%); transition: transform 0.4s cubic-bezier(.4,0,.2,1); box-shadow: -8px 0 40px rgba(0,0,0,0.5); }
+        #side-panel.open { transform: translateX(0); }
+
+        #close-btn { position: absolute; top: 14px; right: 14px; background: var(--border); border: none; color: var(--muted); width: 32px; height: 32px; border-radius: 8px; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s, color 0.2s; z-index: 10; }
+        #close-btn:hover { background: #ef4444; color: #fff; }
+
+        #panel-image-wrap { width: 100%; height: 200px; overflow: hidden; position: relative; flex-shrink: 0; }
+        #panel-image-wrap::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 80px; background: linear-gradient(transparent, var(--panel)); }
+        #panel-img {
+            width: 100%; height: 100%; object-fit: cover; display: block;
+            cursor: zoom-in;
+            transition: transform 0.2s;
+        }
+        #panel-img:hover { transform: scale(1.03); }
+        #panel-img-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1a1f2e, #0f1117); font-size: 56px; }
+
+        /* zoom hint overlay on image */
+        #panel-image-wrap .zoom-hint {
+            position: absolute; bottom: 90px; right: 10px; z-index: 5;
+            background: rgba(0,0,0,0.55); border-radius: 6px; padding: 3px 8px;
+            font-size: 10px; color: #cbd5e1; pointer-events: none;
+            opacity: 0; transition: opacity 0.2s;
+        }
+        #panel-image-wrap:hover .zoom-hint { opacity: 1; }
+
+        #panel-content { padding: 20px 22px 16px; overflow-y: auto; flex: 1; }
+        #panel-content::-webkit-scrollbar { width: 4px; }
+        #panel-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+        #panel-tag { display: inline-block; font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); background: rgba(74,222,128,0.1); border: 1px solid rgba(74,222,128,0.25); border-radius: 99px; padding: 3px 10px; margin-bottom: 10px; }
+        #panel-name { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.2; margin-bottom: 14px; }
+
+        .coord-block { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; display: flex; gap: 20px; }
+        .coord-item label { font-family: 'Space Mono', monospace; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 3px; }
+        .coord-item span { font-family: 'Space Mono', monospace; font-size: 13px; color: var(--accent2); }
+
+        #panel-details { font-size: 13.5px; color: #94a3b8; line-height: 1.7; border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; }
+
+        .info-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+        .info-pill { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+        .info-pill span.icon { font-size: 14px; }
+
+        /* MARKERS */
+        .custom-marker { width: 36px; height: 36px; border: 3px solid #fff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); cursor: pointer; transition: filter 0.2s; }
+        .custom-marker:hover { filter: brightness(1.3); }
+        .custom-marker.active { outline: 3px solid rgba(255,255,255,0.6); outline-offset: 2px; filter: brightness(1.2); }
+        .leaflet-tile-pane { filter: brightness(0.85) saturate(0.7); }
+
+        /* ── LIGHTBOX ─────────────────────────────────────────────── */
+        #lightbox {
+            display: none;
+            position: fixed; inset: 0; z-index: 9999;
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(6px);
+            align-items: center;
+            justify-content: center;
+            animation: lbFadeIn 0.2s ease;
+        }
+        #lightbox.active { display: flex; }
+        @keyframes lbFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        #lightbox-img {
+            max-width: 92vw;
+            max-height: 88vh;
+            border-radius: 10px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+            object-fit: contain;
+            animation: lbZoomIn 0.25s cubic-bezier(.4,0,.2,1);
+        }
+        @keyframes lbZoomIn { from { transform: scale(0.88); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+        #lightbox-close {
+            position: fixed; top: 18px; right: 18px;
+            background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+            color: #fff; width: 40px; height: 40px; border-radius: 10px;
+            font-size: 20px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: background 0.2s;
+        }
+        #lightbox-close:hover { background: #ef4444; border-color: #ef4444; }
+
+        #lightbox-caption {
+            position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+            background: rgba(15,17,23,0.8); backdrop-filter: blur(8px);
+            border: 1px solid var(--border); border-radius: 99px;
+            padding: 7px 20px; font-size: 13px; color: var(--text);
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+<div id="map-wrapper">
+    <div id="toolbar">
+        <div id="header">
+            <h1>📍 GIS Group 3</h1>
+            <p> MEMBERS:                <br>
+                SERITO, SARAH JANE      <br>
+                ORIT, KAI               <br>
+                SEGOVIA, VIC            <br>
+                VILLAMOR, VICENTA       <br>
+                LORZANO, PRINCES        <br>
+                NAPULI, GODWIN          <br>
+                NEGROS, KENNETH         <br> 
+                ORDIZ, JESSON           <br>
+                PANAL, DWAYNE           <br>
+                PIL, NORIEL             <br>
+                PINAMONGAHAN, TRISHA    <br>
+                RANIEL, SYNON LESTER    <br>
+                SANCHEZ, MARIEL         <br>
+                SISCON, CRISTIAN        <br>
+                TACTACAN, NIELSON       <br>
+                TALAVERO, JUDE          <br>
+                TEMARIO, THEA           <br>
+                TUNDAG, CLAIRE          <br>
+            </p>
+        </div>
+    </div>
+    <div id="map"></div>
+    <div id="hint">Click a marker to view details</div>
+</div>
+
+<!-- Info Panel -->
+<div id="side-panel">
+    <button id="close-btn" title="Close">✕</button>
+    <div id="panel-image-wrap">
+        <img id="panel-img" src="" alt="" style="display:none;" title="Click to enlarge">
+        <div id="panel-img-placeholder">📍</div>
+        <span class="zoom-hint">🔍 Click to enlarge</span>
+    </div>
+    <div id="panel-content">
+        <div id="panel-tag">Location</div>
+        <div id="panel-name">—</div>
+        <div class="coord-block">
+            <div class="coord-item"><label>Latitude</label><span id="panel-lat">—</span></div>
+            <div class="coord-item"><label>Longitude</label><span id="panel-lng">—</span></div>
+        </div>
+        <div id="panel-details"></div>
+        <div class="info-row" id="panel-pills"></div>
+    </div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox">
+    <button id="lightbox-close" title="Close">✕</button>
+    <img id="lightbox-img" src="" alt="">
+    <div id="lightbox-caption"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="script.js"></script>
+<script>
+    // ── LIGHTBOX LOGIC ──────────────────────────────────────────────
+    const lightbox      = document.getElementById('lightbox');
+    const lightboxImg   = document.getElementById('lightbox-img');
+    const lightboxClose = document.getElementById('lightbox-close');
+    const lightboxCap   = document.getElementById('lightbox-caption');
+    const panelImgEl    = document.getElementById('panel-img');
+
+    function openLightbox() {
+        if (!panelImgEl.src || panelImgEl.style.display === 'none') return;
+        lightboxImg.src = panelImgEl.src;
+        lightboxCap.textContent = document.getElementById('panel-name').textContent;
+        lightbox.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeLightbox() {
+        lightbox.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    panelImgEl.addEventListener('click', openLightbox);
+    lightboxClose.addEventListener('click', closeLightbox);
+
+    // Click backdrop to close
+    lightbox.addEventListener('click', (e) => {
+        if (e.target === lightbox) closeLightbox();
+    });
+
+    // ESC key to close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeLightbox();
+    });
+</script>
+</body>
+</html>
